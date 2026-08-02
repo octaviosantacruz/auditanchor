@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-08-02T00:00:00Z",
+  "source": "magiclink",
+  "event_id": "secret-demo-created",
+  "subject": "secret-demo",
+  "action": "created",
+  "data": {
+    "ttl_seconds": 900,
+    "max_views": 1
+  }
+}
