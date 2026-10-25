@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -56,6 +57,10 @@ func (s *Server) appendEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.Append(event); err != nil {
+		if errors.Is(err, eventlog.ErrRecordTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "event is too large")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "could not append event")
 		return
 	}

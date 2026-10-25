@@ -3,10 +3,15 @@ package eventlog
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 )
+
+const maxRecordBytes = 60 * 1024
+
+var ErrRecordTooLarge = errors.New("event record too large")
 
 type Store struct {
 	path string
@@ -31,6 +36,9 @@ func (s *Store) Append(event Event) error {
 	record, err := event.Canonical()
 	if err != nil {
 		return err
+	}
+	if len(record)+1 > maxRecordBytes {
+		return ErrRecordTooLarge
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
