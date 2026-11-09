@@ -74,3 +74,37 @@ con esa evidencia.
   depender de un módulo privado; además el verificador "sin confiar en el
   servidor" exige código auditable. Historial revisado antes de publicar: sin
   secretos. Falta elegir licencia.
+
+## Librería implementada — 2026-11-09
+
+Hito 1, pasos 1 y 2 hechos; el 3 a medias (falta el checkpoint real de Ozal).
+
+- **Servidor retirado**: `cmd/server`, `internal/*`, Dockerfile y compose
+  borrados. Ya no hay puerto 8081 ni `data/`.
+- **`merkle/`**: RFC 6962/9162 (raíz, inclusión, consistencia). Vectores de
+  Certificate Transparency, exhaustivo 1–70 contra referencia ingenua, 3 fuzz.
+  El fallo de duplicación (CVE-2012-2459) quedó corregido con test de regresión.
+- **Hallazgo de diseño**: una ruta de inclusión no fija el tamaño del árbol
+  (la misma ruta vale para tamaño 3 y 4 con la misma raíz). Por eso se ancla un
+  head digest con dominio + tamaño + raíz (`receipt.HeadDigest`).
+- **`ots/`**: formato OpenTimestamps completo (ops, atestaciones, archivo
+  `.ots`), `Stamp` a varios calendarios con nonce, `Upgrade` con allowlist
+  anti-SSRF, verificación contra header de bloque y fuente Esplora. Lee
+  `hello-world.txt.ots` y lo re-serializa idéntico; verificado contra el header
+  real del bloque 358391. `FuzzParse`: ~5M ejecuciones limpias.
+- **`receipt/`**: recibo JSON estricto con anclas; `Verify` online u offline.
+- **CLI** `auditanchor`: root, prove, stamp, upgrade, verify, info, export-ots.
+- **Prueba real**: stamp de un log de demo contra los 4 calendarios públicos
+  (alice, bob, finney, catallaxy): los 4 respondieron, `upgrade` informa
+  pendiente. Guardado en `testdata/demo/receipt-pending.json`.
+- Dependencia: `golang.org/x/crypto v0.57.0` (misma que Ozal) por RIPEMD-160 y
+  Keccak de pruebas antiguas. Go 1.26 (igual que Ozal, Custodia y SIGEA).
+
+### Pendiente
+- Upgrade del recibo de demo cuando Bitcoin confirme (horas) y verificar con
+  `-esplora` y con un nodo propio; guardar el recibo confirmado como fixture.
+- Paso 3 del Hito 1: anclar un checkpoint real de Ozal y verificarlo desde
+  otra máquina.
+- Limpieza en server-ops: reserva 8081 retirada de `ports.json`; la copia de
+  `auditanchor/data` en `internal/backup` queda inofensiva (el directorio no
+  existe) hasta el próximo cambio en ese paquete.

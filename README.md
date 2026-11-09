@@ -4,12 +4,15 @@ AuditAnchor is the shared integrity layer for the Ozal, SIGEA and Custodia
 projects. It lets a third party check that a record existed at a given time and
 has not been rewritten since, without trusting the server that produced it.
 
-It batches records into a Merkle tree, anchors the root on an external
-timestamping layer, and hands out inclusion proofs that can be verified offline.
-The raw records stay private: only a hash root leaves your infrastructure.
+It is a Go library plus a CLI. A project batches its records into an RFC 6962
+Merkle tree, anchors the tree head on Bitcoin through OpenTimestamps, and hands
+out receipts that anyone can verify offline. The raw records stay private: only
+a hash leaves your infrastructure.
 
-> Status: early prototype. See [STATUSCHECK.md](STATUSCHECK.md) for the real
-> state of the code and the milestone that decides whether the idea holds.
+> Status: milestone 1 in progress. The library and CLI work, including real
+> stamps against the public OpenTimestamps calendars. Still missing: a real Ozal
+> checkpoint anchored and verified from another machine. See
+> [STATUSCHECK.md](STATUSCHECK.md).
 
 ## Why This Exists
 
@@ -32,80 +35,118 @@ Each project already promises evidence and lacks exactly that:
 
 - **Not a generic anchoring service.** Sigstore Rekor, Trillian, immudb and
   OpenTimestamps already cover that space; AuditAnchor exists to serve these
-  three projects.
+  three projects. There is no server to run.
 - **Not a blockchain project.** Anchoring a hash on Bitcoin is applied
   cryptography (Merkle trees, inclusion proofs, timestamps), not blockchain
   development. There is no token, wallet or smart contract.
-- **Not a reimplementation of primitives.** It uses Go's standard
-  `crypto/sha256` and builds the protocol around it.
+- **Not a reimplementation of primitives.** Hashes come from Go's standard
+  library, plus `golang.org/x/crypto` for the two legacy hashes the
+  OpenTimestamps format still contains (RIPEMD-160, Keccak-256).
+
+## Packages
+
+```text
+github.com/octaviosantacruz/auditanchor
+  merkle/          RFC 6962 tree: roots, inclusion and consistency proofs
+  ots/             OpenTimestamps: parse/serialize, stamp, upgrade, Bitcoin check
+  receipt/         portable receipt: tree head + inclusion proof + anchors
+  cmd/auditanchor  CLI: root, prove, stamp, upgrade, verify, info, export-ots
+```
+
+### From Go
+
+```go
+tree := merkle.New(records)               // records are exact bytes, e.g. JSONL lines
+
+// Anchor the tree head once. The digest commits to size and root together.
+head := receipt.HeadDigest(tree.Size(), tree.Root())
+ts, err := (&ots.Client{}).Stamp(ctx, head[:]) // pending until Bitcoin confirms
+
+// Later, from the project's own periodic job (confirmation takes hours):
+res := (&ots.Client{}).Upgrade(ctx, ts)
+
+// One receipt per record you need to prove; they all share the anchor.
+r, err := receipt.New(tree, index)
+err = r.SetTimestamp(ts)
+b, err := r.Encode()                        // JSON, hand it to an auditor
+```
+
+Verification needs only the record and the receipt:
+
+```go
+r, err := receipt.Decode(b)
+res, err := r.Verify(ctx, record, ots.Esplora{BaseURL: "https://blockstream.info/api"})
+// res.Anchored, res.Height, res.Time
+```
+
+Pass `nil` instead of a header source to verify offline; the result then lists
+the Bitcoin block heights and Merkle roots to compare against your own node.
+
+`merkle.Tree.ConsistencyProof` and `merkle.VerifyConsistency` prove that a
+later tree head only appended to an earlier one, so successive anchors of a
+growing log show that the past was not rewritten.
+
+### From the CLI
+
+```bash
+go install github.com/octaviosantacruz/auditanchor/cmd/auditanchor@latest
+
+auditanchor root  -lines audit.jsonl                 # size, root, head digest
+auditanchor prove -lines audit.jsonl -index 1 -o receipt.json
+auditanchor stamp receipt.json                       # submit to public calendars
+auditanchor upgrade receipt.json                     # a few hours later
+auditanchor verify receipt.json -lines audit.jsonl   # offline
+auditanchor verify receipt.json -lines audit.jsonl -esplora https://blockstream.info/api
+auditanchor export-ots -o head.ots receipt.json      # for the reference "ots" client
+```
+
+With `-lines`, each line of the file without its trailing newline is one record.
+A file whose last line has no newline is rejected as a possibly torn write.
 
 ## Design
 
 ```text
 records (Ozal checkpoints, SIGEA evidence, ...)
-  -> domain-separated leaf hashes (0x00 || record)
-  -> Merkle tree, interior nodes 0x01 || left || right
-  -> root anchored externally (OpenTimestamps -> Bitcoin)
-  -> inclusion proof per record, verifiable offline
+  -> leaf hash     SHA-256(0x00 || record)
+  -> node hash     SHA-256(0x01 || left || right), RFC 6962 split
+  -> head digest   SHA-256("auditanchor/tree-head/v1" || 0x00 || uint64be(size) || root)
+  -> OpenTimestamps: append nonce, SHA-256, submit to calendars
+  -> Bitcoin block header Merkle root (after confirmation)
 ```
 
-The tree is being moved to the RFC 6962 shape: an unpaired node is promoted, not
-duplicated. Duplicating the last node (as Bitcoin does) lets `[a,b,c]` and
-`[a,b,c,c]` share a root (CVE-2012-2459).
+Choices that matter for security:
 
-## Shape: a Go library plus a CLI
+- **RFC 6962 split, no duplication.** An unpaired node is promoted, never
+  copied. Duplicating it (as Bitcoin's transaction tree does) lets `[a,b,c]`
+  and `[a,b,c,c]` share a root (CVE-2012-2459). The prototype had that bug.
+- **The anchor covers size and root.** An audit path alone does not bind the
+  tree size: the same path can verify for two sizes against one root. The head
+  digest includes the size, so a receipt cannot be replayed against another.
+- **Untrusted proofs cannot make the verifier call arbitrary URLs.** `Upgrade`
+  only contacts calendars on an allowlist (public OpenTimestamps calendars by
+  default), so a hostile receipt cannot be used for SSRF.
+- **Bounded parsing.** Message, argument, payload and nesting limits follow the
+  reference implementation; the parser is fuzzed and round-trips the reference
+  example proof byte for byte.
+- **Trust is explicit.** `-esplora` trusts that service for the
+  height-to-block mapping (the header must still hash to the block it names).
+  Offline verification prints the block and root to check with `bitcoin-cli`.
 
-AuditAnchor is a Go module the three projects import, not a service they call.
-Each project builds trees over its own records and stores receipts next to its
-own data, so there is no extra process, port, disk or backup to operate.
+More detail in [docs/design.md](docs/design.md).
 
-```text
-github.com/octaviosantacruz/auditanchor
-  merkle/          RFC 6962 tree, inclusion proofs, Verify
-  ots/             stamp and upgrade with OpenTimestamps
-  proof/           portable receipt: root + inclusion proof + OTS stamp
-  cmd/auditanchor  CLI: verify (plus stamp/upgrade for manual operation)
-```
-
-Intended use from a consumer:
-
-```go
-tree := merkle.New(records)
-stamp, err := ots.Stamp(ctx, tree.Root())      // pending until Bitcoin confirms
-// later, from the consumer's own periodic job:
-stamp, err = ots.Upgrade(ctx, stamp)
-receipt := proof.New(tree, index, stamp)       // hand this to an auditor
-```
+## Development
 
 ```bash
-auditanchor verify receipt.json record.json    # offline, trusts no server
+go test -race ./...
+go test ./merkle -run=^$ -fuzz=FuzzVerifyInclusion -fuzztime=30s
+go test ./ots    -run=^$ -fuzz=FuzzParse           -fuzztime=30s
 ```
 
-OpenTimestamps stamps start pending and are confirmed on Bitcoin hours later.
-The library provides `Upgrade`; each consumer calls it from the scheduler it
-already has.
+Test vectors: Certificate Transparency roots and proofs for the tree; the
+OpenTimestamps reference `hello-world.txt.ots` (Bitcoin block 358391) and its
+real block header for the anchor; a receipt stamped against the four public
+calendars on 2026-11-09 for real calendar responses.
 
-> The code today is still the original prototype: an HTTP server
-> (`cmd/server`, `internal/api`, `internal/eventlog`) and a local-file anchor
-> (`internal/anchor`). Those are slated for removal; only `internal/merkle`
-> carries over, promoted to `merkle/`. The API above is the target, not what
-> exists yet.
+## License
 
-## Roadmap
-
-Milestone 1, which decides whether the idea holds:
-
-1. RFC 6962 tree, root/proof tests against known vectors, fuzzing of
-   `Proof`/`Verify`.
-2. `auditanchor verify`: offline verification that does not trust the server.
-3. OpenTimestamps backend; anchor a real Ozal checkpoint and verify it from
-   another machine.
-
-Milestone 1 also does the reshape: promote `merkle/`, add `ots/`, `proof/` and
-`cmd/auditanchor`, and drop the HTTP server and file anchor.
-
-After that, if third-party verification holds up:
-
-- Ozal as the first consumer: periodic anchoring of audit checkpoints.
-- SIGEA scan evidence.
-- Ed25519-signed receipts and hash-chain checkpoints between batches.
+MIT
