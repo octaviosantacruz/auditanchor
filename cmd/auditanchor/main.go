@@ -328,6 +328,11 @@ func cmdVerify(ctx context.Context, args []string) error {
 	if err != nil {
 		if errors.Is(err, merkle.ErrInvalidProof) {
 			fmt.Println("FAIL: record is not in this tree head:", err)
+			if *recordPath != "" && bytes.HasSuffix(record, []byte("\n")) {
+				// -record hashes the file byte for byte; -lines drops each
+				// line's newline. Say so instead of guessing which was meant.
+				fmt.Println("hint: the record file ends with a newline, which -record includes; if the tree was built with -lines, verify with -lines instead")
+			}
 			return errFailed
 		}
 		if errors.Is(err, ots.ErrBitcoinMismatch) {

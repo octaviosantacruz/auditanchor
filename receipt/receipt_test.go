@@ -202,3 +202,33 @@ func TestRealPendingReceipt(t *testing.T) {
 		t.Fatal("another line verified against this receipt")
 	}
 }
+
+// TestRealOzalCheckpoint anchors a checkpoint signed by a real Ozal binary
+// (ozal audit checkpoint, 2026-11-09) and stamped against the public
+// calendars: the receipt verifies the exact checkpoint line and rejects a
+// checkpoint whose sequence number was changed.
+func TestRealOzalCheckpoint(t *testing.T) {
+	raw, err := os.ReadFile("../testdata/ozal/checkpoint-receipt-pending.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := os.ReadFile("../testdata/ozal/checkpoints.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := bytes.TrimSuffix(line, []byte("\n"))
+	res, err := r.Verify(context.Background(), record, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Pending) == 0 {
+		t.Fatal("expected pending calendar attestations")
+	}
+	if err := r.VerifyRecord(bytes.Replace(record, []byte(`"seq":5`), []byte(`"seq":4`), 1)); err == nil {
+		t.Fatal("a modified checkpoint verified")
+	}
+}

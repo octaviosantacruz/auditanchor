@@ -108,3 +108,21 @@ Hito 1, pasos 1 y 2 hechos; el 3 a medias (falta el checkpoint real de Ozal).
 - Limpieza en server-ops: reserva 8081 retirada de `ports.json`; la copia de
   `auditanchor/data` en `internal/backup` queda inofensiva (el directorio no
   existe) hasta el próximo cambio en ese paquete.
+
+### Checkpoint real de Ozal anclado — 2026-11-09
+- Ozal descartable (`c9abeb1`) con auditoría (`include: access, admin`); 5
+  registros de administración en la cadena. `ozal audit keygen`, `checkpoint`
+  y `verify` OK; Ozal informa `tamper_evident=false` ("external storage is
+  not verified"), que es el hueco que cubre AuditAnchor.
+- Checkpoint anclado con `prove -lines` + `stamp` en los 4 calendarios.
+  `verify -lines` OK; un checkpoint con `seq` alterado falla. Guardado en
+  `testdata/ozal/` (JSONL, clave pública del checkpoint, recibo; sin clave
+  privada) con test de regresión.
+- Hallazgo de uso: `verify -record` hashea el archivo exacto, con su salto de
+  línea final, y no coincidía con un árbol hecho con `-lines`. No se adivina:
+  el CLI ahora lo explica con una pista. Documentado en el README.
+- Las redirecciones al login (302) no se auditan; para registros de acceso
+  autenticado hace falta passkey (queda para la aceptación pública).
+
+Pendiente del Hito 1: confirmación en Bitcoin de ambos recibos (demo y Ozal),
+verificación con `-esplora` y desde otra máquina; luego etiquetar `v0.1.0`.

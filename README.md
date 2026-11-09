@@ -10,8 +10,9 @@ out receipts that anyone can verify offline. The raw records stay private: only
 a hash leaves your infrastructure.
 
 > Status: milestone 1 in progress. The library and CLI work, including real
-> stamps against the public OpenTimestamps calendars. Still missing: a real Ozal
-> checkpoint anchored and verified from another machine. See
+> stamps against the public OpenTimestamps calendars and a real Ozal audit
+> checkpoint anchored on 2026-11-09. Still missing: its Bitcoin confirmation
+> verified from another machine. See
 > [STATUSCHECK.md](STATUSCHECK.md).
 
 ## Why This Exists
@@ -102,6 +103,24 @@ auditanchor export-ots -o head.ots receipt.json      # for the reference "ots" c
 
 With `-lines`, each line of the file without its trailing newline is one record.
 A file whose last line has no newline is rejected as a possibly torn write.
+
+### Anchoring Ozal audit checkpoints
+
+Ozal signs checkpoints of its hash-chained audit log, and says itself that
+they prove nothing until a copy is kept outside the host. Anchor them:
+
+```bash
+ozal audit checkpoint -key file:/etc/ozal/audit.key -out /tmp/ckpt.json -config edge.json
+cat /tmp/ckpt.json >> checkpoints.jsonl          # one checkpoint per line
+auditanchor prove -lines checkpoints.jsonl -index N -o ckpt-N.json
+auditanchor stamp ckpt-N.json                    # later: auditanchor upgrade
+```
+
+An auditor then checks, from anywhere: the chain against the checkpoint
+(`ozal audit verify -checkpoint ... -public-key ...`), and the checkpoint
+against the anchor (`auditanchor verify ckpt-N.json -lines checkpoints.jsonl`).
+Use `-lines` here: `-record` hashes a file byte for byte, including its final
+newline. `testdata/ozal/` holds a real example, anchored on 2026-11-09.
 
 ## Design
 
