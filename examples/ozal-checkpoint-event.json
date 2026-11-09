@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-11-09T00:00:00Z",
+  "source": "ozal",
+  "event_id": "audit-checkpoint-1024",
+  "subject": "ozal-audit-chain",
+  "action": "checkpoint",
+  "data": {
+    "seq": 1024,
+    "key_id": "ozal-audit-demo",
+    "tail_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

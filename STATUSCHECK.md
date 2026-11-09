@@ -17,3 +17,60 @@ Servicio de anclaje de logs de auditoría a prueba de manipulación, en Go. Reci
 ## Pendientes / próximos pasos
 - Si en algún momento se despliega en un servidor real, `docker-compose.yml` sigue ahí y sirve, pero recordar el fix de permisos del volumen si se retoma ese camino (ver historial de este archivo / commits).
 - No se probó el flujo completo de anclaje de Merkle root (`POST /batches`, `GET /proof/{index}`) más allá de los endpoints básicos.
+
+## Dirección — 2026-11-09
+
+**Decisión: no se archiva; se reposiciona.** AuditAnchor deja de ser un servicio
+genérico de anclaje o un proyecto "blockchain" y pasa a ser la **capa de
+integridad compartida** del portafolio: librería + CLI de verificación (+ servicio
+opcional) que permite a un tercero comprobar que un registro existía en un momento
+dado y no fue reescrito.
+
+### Por qué así
+- Como servicio genérico compite con Sigstore Rekor/Trillian, immudb u
+  OpenTimestamps directo, sin diferencial claro.
+- Anclar un hash en Bitcoin es criptografía aplicada (Merkle, pruebas de
+  inclusión, sellos de tiempo), no desarrollo blockchain.
+- Los tres proyectos principales prometen evidencia y les falta lo mismo:
+  - **Ozal**: `internal/audit` ya encadena por hash y firma checkpoints Ed25519,
+    pero su propio código reconoce que no prueban nada sin retenerlos fuera del
+    host (`checkpoint.go`, `TamperEvident=false`).
+  - **SIGEA**: "evidencia detrás de cada vulnerabilidad" → evidencia fechada e
+    inalterable.
+  - **Custodia**: conclusiones de correlación con prueba de integridad.
+
+### Estado real del código (2026-11-09)
+- `internal/merkle`: árbol SHA-256 con separación de dominio 0x00/0x01 (bien),
+  pruebas de inclusión y `Verify`. **Sin tests.**
+- **Fallo:** con nivel impar duplica el último nodo (estilo Bitcoin,
+  CVE-2012-2459): `[a,b,c]` y `[a,b,c,c]` dan el mismo root. Cambiar a RFC 6962
+  (promover el nodo sin pareja).
+- `internal/anchor`: sólo backend de archivo local; no hay anclaje externo.
+- README todavía se presenta como complemento de MagicLink (archivado 2026-11-09).
+
+### Hito 1 — valida la idea (prioridad baja: después de la identidad Ozal↔Custodia)
+1. Árbol RFC 6962 + tests de raíz/pruebas (vectores conocidos) + fuzz de
+   `Proof`/`Verify`.
+2. `auditanchor verify`: verificación offline que no confía en el servidor.
+3. Backend OpenTimestamps (ancla en Bitcoin, sin wallet ni gas) y anclar un
+   checkpoint real de Ozal; verificarlo desde otra máquina.
+
+**Criterio de salida:** si el hito sale y la verificación por un tercero
+convence, seguir con Ozal como primer consumidor y luego SIGEA. Si no, archivar
+con esa evidencia.
+
+### Forma: librería Go + CLI, repo público — 2026-11-09
+- **Paquete, no servicio.** Ozal, SIGEA y Custodia importan el módulo; cada uno
+  arma árboles sobre sus registros y guarda los recibos junto a sus datos. Sin
+  proceso, puerto, disco ni respaldo extra.
+- Destino: `merkle/` (RFC 6962), `ots/` (Stamp/Upgrade OpenTimestamps), `proof/`
+  (recibo portable), `cmd/auditanchor verify`. Cada consumidor llama `Upgrade`
+  desde su propio scheduler (los sellos OTS se confirman horas después).
+- A retirar en el Hito 1: `cmd/server`, `internal/api`, `internal/eventlog`,
+  `internal/anchor` (y Dockerfile/compose). Sólo `internal/merkle` sobrevive.
+  Al retirar el servidor, quitar la reserva 8081 de `server-ops/ports.json` y la
+  copia de `auditanchor/data` en `server-ops/internal/backup`.
+- **Repo público** desde 2026-11-09: Ozal y Custodia son públicos y no pueden
+  depender de un módulo privado; además el verificador "sin confiar en el
+  servidor" exige código auditable. Historial revisado antes de publicar: sin
+  secretos. Falta elegir licencia.
